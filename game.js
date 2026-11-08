@@ -83,7 +83,12 @@ const SHIELD_HITS     = 3;    // impactos que absorbe
 const SLOW_DURATION   = 6;     // s de duración
 const SLOW_FACTOR     = 0.5;   // los asteroides van a la mitad de velocidad
 const POWER_TYPES     = ['triple', 'shield', 'slow'];
-const POWER_COLORS    = { triple: '#4ff', shield: '#fc3', slow: '#c6f' };
+const POWER_COLORS    = { triple: '#4ff', shield: '#fc3', slow: '#c6f', nova: '#f55' };
+
+// ── Power-up: Bomba Nova (ítem escaso, un solo uso, se activa con N) ──────────
+const NOVA_CHANCE     = 0.12;  // prob. de que un asteroide brillante lleve Nova
+const NOVA_FX_TIME    = 0.6;   // s de duración del destello
+let novaFx = null;             // { x, y, t } efecto visual activo
 const randPower = () => POWER_TYPES[randInt(0, POWER_TYPES.length - 1)];
 const astDt = dt => (ship && ship.slowTimer > 0 ? dt * SLOW_FACTOR : dt);
 
@@ -192,7 +197,14 @@ class PowerUp {
     ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
     ctx.stroke();
     ctx.beginPath();
-    if (this.type === 'slow') {
+    if (this.type === 'nova') {
+      // Estrella de 8 rayos
+      for (let i = 0; i < 8; i++) {
+        const a = i * Math.PI / 4;
+        ctx.moveTo(Math.cos(a) * 2, Math.sin(a) * 2);
+        ctx.lineTo(Math.cos(a) * 7, Math.sin(a) * 7);
+      }
+    } else if (this.type === 'slow') {
       // Reloj de arena
       ctx.moveTo(-5, -6); ctx.lineTo(5, -6); ctx.lineTo(-5, 6); ctx.lineTo(5, 6);
       ctx.closePath();
@@ -233,6 +245,7 @@ class Ship {
     this.shieldTimer   = 0;
     this.shieldHits    = 0;
     this.shieldCooldown = 0;
+    this.novaReady     = false;
     this.dead          = false;
   }
 
@@ -388,9 +401,26 @@ function spawnAsteroids(count) {
   let i = POWER_TYPES.indexOf(randPower());
   for (const a of asteroids.filter(a => a.glowing))
     a.power = POWER_TYPES[i++ % POWER_TYPES.length];
+  // Nova es escasa: solo algunos asteroides brillantes la llevan
+  for (const a of asteroids.filter(a => a.glowing))
+    if (Math.random() < NOVA_CHANCE) a.power = 'nova';
+}
+
+// Destruye todos los asteroides en pantalla (sin dividirlos). Un solo uso.
+function triggerNova() {
+  ship.novaReady = false;
+  novaFx = { x: ship.x, y: ship.y, t: NOVA_FX_TIME };
+  for (const a of asteroids) {
+    a.dead = true;
+    score += POINTS[a.size];
+    if (a.glowing) powerups.push(new PowerUp(a.x, a.y, a.power));
+    explode(a.x, a.y, a.size * 5);
+  }
+  asteroids = [];
 }
 
 function initGame() {
+  novaFx    = null;
   ship          = new Ship();
   bullets   = [];
   asteroids = [];
@@ -430,6 +460,8 @@ function killShip() {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 function update(dt) {
+  if (novaFx && (novaFx.t -= dt) <= 0) novaFx = null;
+
   if (state === 'gameover') {
     if (pressed('Space')) initGame();
     particles.forEach(p => p.update(dt));
@@ -453,6 +485,9 @@ function update(dt) {
     bullets.push(...ship.tryShoot());
   }
 
+  // Activar Bomba Nova
+  if (pressed('KeyN') && ship.novaReady) triggerNova();
+
   ship.update(dt);
   bullets.forEach(b => b.update(dt));
   asteroids.forEach(a => a.update(astDt(dt)));
@@ -470,6 +505,8 @@ function update(dt) {
       if (p.type === 'shield') {
         ship.shieldTimer = SHIELD_DURATION;
         ship.shieldHits  = SHIELD_HITS;
+      } else if (p.type === 'nova') {
+        ship.novaReady = true;
       } else if (p.type === 'slow') {
         ship.slowTimer = SLOW_DURATION;
       } else {
@@ -572,6 +609,12 @@ function drawHUD() {
   if (ship.slowTimer > 0) {
     ctx.fillStyle = POWER_COLORS.slow;
     ctx.fillText(`LENTO  ${Math.ceil(ship.slowTimer)}s`, 14, hy);
+    hy += 20;
+  }
+
+  if (ship.novaReady) {
+    ctx.fillStyle = POWER_COLORS.nova;
+    ctx.fillText('NOVA  [N]', 14, hy);
   }
 
 }
@@ -595,6 +638,22 @@ function draw() {
   bullets.forEach(b => b.draw());
   powerups.forEach(p => p.draw());
   ship.draw();
+
+  if (novaFx) {
+    const k = novaFx.t / NOVA_FX_TIME;
+    ctx.save();
+    ctx.fillStyle = `rgba(255,90,90,${(0.35 * k).toFixed(2)})`;
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = POWER_COLORS.nova;
+    ctx.shadowColor = POWER_COLORS.nova;
+    ctx.shadowBlur  = 15;
+    ctx.globalAlpha = k;
+    ctx.lineWidth   = 3;
+    ctx.beginPath();
+    ctx.arc(novaFx.x, novaFx.y, (1 - k) * 900, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   drawHUD();
 
