@@ -74,6 +74,8 @@ const GLOW_CHANCE     = 0.15; // prob. de que un asteroide grande brille
 const TRIPLE_DURATION = 8;    // s de duración del power-up
 const TRIPLE_SPREAD   = 0.22; // rad entre balas del abanico
 const POWERUP_TTL     = 8;    // s que el ítem permanece en pantalla
+const MAGNET_DIST     = 45;   // px: distancia a la que la nave absorbe el ítem
+const MAGNET_SPEED    = 900;  // px/s a los que el ítem vuela hacia la nave
 
 // ── Power-up: Escudo Temporal ─────────────────────────────────────────────────
 const SHIELD_DURATION = 8.3;   // s de duración del escudo
@@ -82,8 +84,13 @@ const SHIELD_HITS     = 3;    // impactos que absorbe
 // ── Power-up: Cámara Lenta ────────────────────────────────────────────────────
 const SLOW_DURATION   = 6;     // s de duración
 const SLOW_FACTOR     = 0.5;   // los asteroides van a la mitad de velocidad
-const POWER_TYPES     = ['triple', 'shield', 'slow'];
-const POWER_COLORS    = { triple: '#4ff', shield: '#fc3', slow: '#c6f', nova: '#f55' };
+
+// ── Power-up: Hiperpropulsión ─────────────────────────────────────────────────
+const HYPER_DURATION  = 8;     // s de duración
+const HYPER_THRUST    = 560;   // px/s² (normal: 260)
+const HYPER_MAX_SPEED = 650;   // px/s, tope de velocidad con hiperpropulsión
+const POWER_TYPES     = ['triple', 'shield', 'slow', 'hyper'];
+const POWER_COLORS    = { triple: '#4ff', shield: '#fc3', slow: '#c6f', nova: '#f55', hyper: '#6f6' };
 
 // ── Power-up: Bomba Nova (ítem escaso, un solo uso, se activa con N) ──────────
 const NOVA_CHANCE     = 0.12;  // prob. de que un asteroide brillante lleve Nova
@@ -204,6 +211,11 @@ class PowerUp {
         ctx.moveTo(Math.cos(a) * 2, Math.sin(a) * 2);
         ctx.lineTo(Math.cos(a) * 7, Math.sin(a) * 7);
       }
+    } else if (this.type === 'hyper') {
+      // Doble chevron hacia arriba
+      for (const o of [-3, 3]) {
+        ctx.moveTo(-5, o + 4); ctx.lineTo(0, o - 2); ctx.lineTo(5, o + 4);
+      }
     } else if (this.type === 'slow') {
       // Reloj de arena
       ctx.moveTo(-5, -6); ctx.lineTo(5, -6); ctx.lineTo(-5, 6); ctx.lineTo(5, 6);
@@ -242,6 +254,7 @@ class Ship {
     this.shootCooldown = 0;
     this.tripleTimer   = 0;
     this.slowTimer     = 0;
+    this.hyperTimer    = 0;
     this.shieldTimer   = 0;
     this.shieldHits    = 0;
     this.shieldCooldown = 0;
@@ -255,6 +268,7 @@ class Ship {
     if (this.shootCooldown > 0) this.shootCooldown -= dt;
     if (this.tripleTimer   > 0) this.tripleTimer   -= dt;
     if (this.slowTimer     > 0) this.slowTimer     -= dt;
+    if (this.hyperTimer    > 0) this.hyperTimer    -= dt;
     if (this.shieldCooldown > 0) this.shieldCooldown -= dt;
     if (this.shieldTimer   > 0) {
       this.shieldTimer -= dt;
@@ -262,7 +276,8 @@ class Ship {
     }
 
     const ROT   = 3.5;   // rad/s
-    const THRUST = 260;  // px/s²
+    const hyper  = this.hyperTimer > 0;
+    const THRUST = hyper ? HYPER_THRUST : 260;  // px/s²
     const DRAG   = 0.987;
 
     if (keys['ArrowLeft'])  this.angle -= ROT * dt;
@@ -276,6 +291,13 @@ class Ship {
 
     this.vx *= DRAG;
     this.vy *= DRAG;
+    if (hyper) {
+      const sp = Math.hypot(this.vx, this.vy);
+      if (sp > HYPER_MAX_SPEED) {
+        this.vx *= HYPER_MAX_SPEED / sp;
+        this.vy *= HYPER_MAX_SPEED / sp;
+      }
+    }
     this.x = wrap(this.x + this.vx * dt, W);
     this.y = wrap(this.y + this.vy * dt, H);
   }
@@ -336,9 +358,9 @@ class Ship {
     if (this.thrusting && Math.random() > 0.35) {
       ctx.beginPath();
       ctx.moveTo(-8, -4);
-      ctx.lineTo(-8 - rand(6, 14), 0);
+      ctx.lineTo(-8 - (this.hyperTimer > 0 ? rand(16, 30) : rand(6, 14)), 0);
       ctx.lineTo(-8,  4);
-      ctx.strokeStyle = 'rgba(255, 130, 0, 0.85)';
+      ctx.strokeStyle = this.hyperTimer > 0 ? 'rgba(102, 255, 102, 0.9)' : 'rgba(255, 130, 0, 0.85)';
       ctx.stroke();
     }
 
@@ -394,16 +416,27 @@ function spawnAsteroids(count) {
     } while (Math.hypot(x - W / 2, y - H / 2) < SAFE_DIST);
     asteroids.push(new Asteroid(x, y, 3));
   }
-  // Garantiza al menos un asteroide brillante por nivel
-  if (!asteroids.some(a => a.glowing))
-    asteroids[randInt(0, asteroids.length - 1)].glowing = true;
-  // Los asteroides brillantes alternan habilidad: nunca se repite entre dos
-  let i = POWER_TYPES.indexOf(randPower());
-  for (const a of asteroids.filter(a => a.glowing))
-    a.power = POWER_TYPES[i++ % POWER_TYPES.length];
-  // Nova es escasa: solo algunos asteroides brillantes la llevan
-  for (const a of asteroids.filter(a => a.glowing))
-    if (Math.random() < NOVA_CHANCE) a.power = 'nova';
+  // Habilidades por nivel: 1 (niveles 1-5), 2 (6-10), 3 (11-15), 4 (16-20)...
+  // con tope en la cantidad de tipos de habilidad y de asteroides
+  const nPowers = Math.min(1 + Math.floor((level - 1) / 5), POWER_TYPES.length, asteroids.length);
+  asteroids.forEach(a => { a.glowing = false; });
+  // Elige `nPowers` asteroides al azar, cada uno con una habilidad distinta
+  const pool = [...asteroids];
+  const powers = [...POWER_TYPES].sort(() => Math.random() - 0.5);
+  for (let k = 0; k < nPowers; k++) {
+    const a = pool.splice(randInt(0, pool.length - 1), 1)[0];
+    a.glowing = true;
+    a.power   = powers[k];
+  }
+  // Nova es escasa y se suma a las habilidades del nivel (no las reemplaza):
+  // por cada habilidad del nivel hay NOVA_CHANCE de que otro asteroide lleve Nova
+  for (let k = 0; k < nPowers && pool.length > 0; k++) {
+    if (Math.random() < NOVA_CHANCE) {
+      const a = pool.splice(randInt(0, pool.length - 1), 1)[0];
+      a.glowing = true;
+      a.power   = 'nova';
+    }
+  }
 }
 
 // Destruye todos los asteroides en pantalla (sin dividirlos). Un solo uso.
@@ -498,6 +531,18 @@ function update(dt) {
   particles = particles.filter(p => !p.dead);
   powerups  = powerups.filter(p => !p.dead);
 
+  // Imán: dentro de MAGNET_DIST el ítem es absorbido rápidamente hacia la nave
+  if (!ship.dead) {
+    for (const p of powerups) {
+      const d = dist(ship, p);
+      if (d < MAGNET_DIST && d > 0) {
+        const step = Math.min(MAGNET_SPEED * dt, d);
+        p.x += (ship.x - p.x) / d * step;
+        p.y += (ship.y - p.y) / d * step;
+      }
+    }
+  }
+
   // Nave recoge power-up
   for (const p of powerups) {
     if (dist(ship, p) < ship.radius + p.radius) {
@@ -509,6 +554,8 @@ function update(dt) {
         ship.novaReady = true;
       } else if (p.type === 'slow') {
         ship.slowTimer = SLOW_DURATION;
+      } else if (p.type === 'hyper') {
+        ship.hyperTimer = HYPER_DURATION;
       } else {
         ship.tripleTimer = TRIPLE_DURATION;
       }
@@ -609,6 +656,12 @@ function drawHUD() {
   if (ship.slowTimer > 0) {
     ctx.fillStyle = POWER_COLORS.slow;
     ctx.fillText(`LENTO  ${Math.ceil(ship.slowTimer)}s`, 14, hy);
+    hy += 20;
+  }
+
+  if (ship.hyperTimer > 0) {
+    ctx.fillStyle = POWER_COLORS.hyper;
+    ctx.fillText(`HIPER  ${Math.ceil(ship.hyperTimer)}s`, 14, hy);
     hy += 20;
   }
 
