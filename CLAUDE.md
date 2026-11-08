@@ -24,4 +24,5 @@ All logic lives in `game.js`, loaded by `index.html` via a plain `<script>` tag 
 
 ## Notes
 
-- README mentions power-ups and a "shooting star" asteroid type, but these are not implemented in the current `game.js`.
+- **Disparo Triple power-up**: ~15% of size-3 asteroids spawn `glowing` (cyan pulsing). Destroying one drops a `PowerUp` item (in `powerups[]`, expires after `POWERUP_TTL`); touching it with the ship sets `ship.tripleTimer = TRIPLE_DURATION` (8s), making `tryShoot()` fire 3 bullets in a fan. `tripleTimer` resets in `Ship.reset()`.
+- README mentions a "shooting star" asteroid type, but it is not implemented in the current `game.js`.
