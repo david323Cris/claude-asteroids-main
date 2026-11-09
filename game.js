@@ -90,6 +90,8 @@ const HYPER_DURATION  = 8;     // s de duración
 const HYPER_THRUST    = 560;   // px/s² (normal: 260)
 const HYPER_MAX_SPEED = 650;   // px/s, tope de velocidad con hiperpropulsión
 const POWER_TYPES     = ['triple', 'shield', 'slow', 'hyper'];
+// Lados del marco wireframe de cada ítem: triángulo, hexágono, rombo, octágono, pentágono
+const POWER_SIDES     = { triple: 3, shield: 6, slow: 4, nova: 8, hyper: 5 };
 const POWER_COLORS    = { triple: '#4ff', shield: '#fc3', slow: '#c6f', nova: '#f55', hyper: '#6f6' };
 
 // ── Power-up: Bomba Nova (ítem escaso, un solo uso, se activa con N) ──────────
@@ -200,8 +202,20 @@ class PowerUp {
     ctx.shadowColor = c;
     ctx.shadowBlur  = 10;
     ctx.lineWidth   = 1.5;
+    // Parpadeo suave permanente (pulso de opacidad)
+    const now = performance.now() / 1000;
+    ctx.globalAlpha = 0.65 + 0.35 * Math.sin(now * 6 + this.x);
+    // Marco poligonal rotando lento; cada tipo tiene su figura
+    const sides = POWER_SIDES[this.type] || 6;
+    const R = this.radius + 3;
+    const rot = now * 0.8 + (sides === 4 ? 0 : Math.PI / 2);
     ctx.beginPath();
-    ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+    for (let i = 0; i < sides; i++) {
+      const a = rot + (i / sides) * Math.PI * 2;
+      const px = Math.cos(a) * R, py = Math.sin(a) * R;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
     ctx.stroke();
     ctx.beginPath();
     if (this.type === 'nova') {
